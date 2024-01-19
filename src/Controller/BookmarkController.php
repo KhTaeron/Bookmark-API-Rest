@@ -248,6 +248,7 @@ class BookmarkController extends AbstractController
         $this->denyAccessUnlessGranted('ROLE_ADMIN', null, 'User tried to access a page without having ROLE_ADMIN');
         $response = new Response();
         $response->headers->set('Server', 'ExoAPICRUDREST');
+        
 
         // Requete manuelle pour recuperer l’objet Bookmark
         $entityManager = $doctrine->getManager();
