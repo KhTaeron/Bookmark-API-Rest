@@ -28,38 +28,35 @@ class BookmarkController extends AbstractController
 
         $requestData = $this->getRequestData($request);
 
-        $name = $requestData['name'] ?? null;
-        $description = $requestData['description'] ?? null;
-        $url = $requestData['url'] ?? null;
-
         $entityManager = $doctrine->getManager();
-        $bookmark = new Bookmark();
-        $bookmark->setName($name);
-        $bookmark->setDescription($description);
-        $bookmark->setUrl($url);
-        $bookmark->setLastupdate(new \DateTime('now', new \DateTimeZone(date_default_timezone_get())));
-        $user = $this->getUser();
-        if ($user) {
-            $bookmark->setUser($user);
-        }
 
-        $errors = $validator->validate($bookmark);
+        $form = $this->create_form();
 
-        if (count($errors) > 0) {
+        $form->submit($requestData);
+
+        // if (count($errors) > 0) {
+        //     $errorsString = (string) $errors;
+
+        //     return new Response($errorsString);
+        // }
+
+
+        if ($form->getErrors()) {
+            $errors =$form->getErrors();
             $errorsString = (string) $errors;
-
             return new Response($errorsString);
         }
 
+        echo($form->getData());
 
-        $entityManager->persist($bookmark);
+        $entityManager->persist($form->getData());
 
         $entityManager->flush();
 
-        $id = $bookmark->getId();
+        // $id = $bookmark->getId();
 
         $response->setStatusCode(Response::HTTP_CREATED, "Created");
-        $response->headers->set("Location", $urlHelper->getAbsoluteUrl('/api/bookmarks/' . $id));
+        // $response->headers->set("Location", $urlHelper->getAbsoluteUrl('/api/bookmarks/' . $id));
 
         return $response;
     }
@@ -333,5 +330,12 @@ class BookmarkController extends AbstractController
     private function create_form()
     {
 
+        $form = $this->createFormBuilder(Bookmark::class)
+            ->add('name')
+            ->add('description')
+            ->add('url')
+            ->getForm();
+
+        return $form;
     }
 }
