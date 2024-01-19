@@ -1,0 +1,2 @@
+INSERT INTO `user` (`id`, `email`, `roles`, `password`) VALUES (1, 'enolatellier.school@gmail.com', '["ROLE_ADMIN"]', '$2y$13$y7IlQ/JiW4F1PAPl/6MnAemznBPuhwacVrRWt8URSxWIkCMxC/pPy');
+
