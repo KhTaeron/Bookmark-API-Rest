@@ -3,6 +3,7 @@
 namespace App\Entity;
 use Symfony\Component\Validator\Constraints as Assert;
 use Doctrine\ORM\Mapping as ORM;
+use App\Repository\BookmarkRepository;
 
 /**
  * @ORM\Entity(repositoryClass=BookmarkRepository::class)
@@ -49,6 +50,10 @@ class Bookmark
      */
     private $user;
 
+    public function __construct() {
+        $this->lastupdate = new \DateTime();
+    }
+
     public function getId(): ?int
     {
         return $this->id;
@@ -59,7 +64,7 @@ class Bookmark
         return $this->name;
     }
 
-    public function setName(string $name): self
+    public function setName(?string $name): self
     {
         $this->name = $name;
 
@@ -71,7 +76,7 @@ class Bookmark
         return $this->description;
     }
 
-    public function setDescription(string $description): self
+    public function setDescription(?string $description): self
     {
         $this->description = $description;
 
@@ -83,7 +88,7 @@ class Bookmark
         return $this->url;
     }
 
-    public function setUrl(string $url): self
+    public function setUrl(?string $url): self
     {
         $this->url = $url;
 

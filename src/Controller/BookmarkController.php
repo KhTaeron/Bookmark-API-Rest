@@ -2,7 +2,12 @@
 
 namespace App\Controller;
 
+use App\Form\BookmarkFormType;
+use App\Service\Metadata\Crawler\MetadataCrawlerInterface;
+use App\Service\Metadata\Parser\MetadataParserInterface;
+use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -11,6 +16,8 @@ use Symfony\Component\HttpFoundation\UrlHelper;
 use Doctrine\Persistence\ManagerRegistry;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 use App\Entity\Bookmark;
+use Symfony\Contracts\Cache\CacheInterface;
+use Symfony\Contracts\Cache\ItemInterface;
 
 class BookmarkController extends AbstractController
 {
@@ -30,30 +37,24 @@ class BookmarkController extends AbstractController
 
         $entityManager = $doctrine->getManager();
 
-        $form = $this->create_form();
+        $bookmark = new Bookmark();
+        $form = $this->create_form($bookmark);
 
         $form->submit($requestData);
 
-        // if (count($errors) > 0) {
-        //     $errorsString = (string) $errors;
-
-        //     return new Response($errorsString);
-        // }
-
-
-        if ($form->getErrors()) {
-            $errors =$form->getErrors();
+        if (!$form->isValid()) {
+            $errors = $form->getErrors();
             $errorsString = (string) $errors;
-            return new Response($errorsString);
+            dd($errors);
+            return new JsonResponse($errorsString, Response::HTTP_BAD_REQUEST);
         }
 
-        echo($form->getData());
 
-        $entityManager->persist($form->getData());
+        $bookmark = $form->getData();
+
+        $entityManager->persist($bookmark);
 
         $entityManager->flush();
-
-        // $id = $bookmark->getId();
 
         $response->setStatusCode(Response::HTTP_CREATED, "Created");
         // $response->headers->set("Location", $urlHelper->getAbsoluteUrl('/api/bookmarks/' . $id));
@@ -173,12 +174,14 @@ class BookmarkController extends AbstractController
      * @Route("/api/bookmarks/last", name="read_collection_last_page", methods={"GET"})
      * @Route("/api/bookmarks/last/{step}", name="read_collection_last_page_step", methods={"GET"}, requirements={"step"="\d+"})
      */
-    public function read_bookmark_collection($page = 1, $step = 10, ManagerRegistry $doctrine, UrlHelper $urlHelper, Request $request): JsonResponse
+    public function read_bookmark_collection(?int $page = 1, ?int $step = 10, ManagerRegistry $doctrine, UrlHelper $urlHelper, Request $request): JsonResponse
     {
         // On ne fixe pas le pas $step et l'occurence $current de la pagination
         //$step = 10;
         $nbtotal = $doctrine->getRepository(Bookmark::class)->countAll();
         $current = (in_array($request->attributes->get('_route'), ["read_collection_last_page", "read_collection_last_page_step"])) ? max(1, $nbtotal - $step) : ($page - 1) * $step + 1;
+        $current = max($current, 1);
+        $step = max($step, 10);
 
         // creation de l'objet Response
         $response = new jsonResponse();
@@ -250,55 +253,27 @@ class BookmarkController extends AbstractController
         $entityManager = $doctrine->getManager();
         $bookmark = $entityManager->getRepository(Bookmark::class)->find($id);
 
-        $errors = $validator->validate($bookmark);
-
-        if (count($errors) > 0) {
-            $errorsString = (string) $errors;
-
-            return new Response($errorsString);
-        }
-
-        $requestData = $this->getRequestData($request);
-
-        // Recuperation des elements de la requete
-        $url = $requestData['url'] ?? null;
-        $name = $requestData['name'] ?? null;
-        $description = $requestData['description'] ?? null;
-
-        // Si le name ou l’url sont vides
-        if (!isset($url) and !isset($name) and !isset($description)) {
-            $response->setStatusCode(Response::HTTP_BAD_REQUEST, "Your request is empty!");
+        if (!$bookmark) {
+            $response->setStatusCode(Response::HTTP_NOT_FOUND, "Bookmark not founded");
             return $response;
         }
 
-        // on fait les modifs dans le modele doctrine
-        if ($url) {
-            $bookmark->setUrl($url);
-        }
-        if ($name) {
-            $bookmark->setName($name);
-        }
-        if ($description) {
-            $bookmark->setDescription($description);
-        }
+        $form = $this->createForm(BookmarkFormType::class, ['csrf_protection' => false]);
+        $form->submit($this->getRequestData($request));
 
-        $errors = $validator->validate($bookmark);
-
-        if (count($errors) > 0) {
-            $errorsString = (string) $errors;
-
-            return new Response($errorsString);
+        if ($form->isSubmitted && $form->isValid) {
+            $entityManager = $doctrine->getManager();
+            $entityManager->flush();
+            $response->setStatusCode(Response::HTTP_OK, "Content updated");
+            return $response;
         }
 
-        // On instancie un objet Bookmark avec Doctrine
-        $entityManager = $doctrine->getManager();
-        $entityManager->flush();
+        $errorMessage = [];
+        foreach ($form->getErrors(true) as $error) {
+            $errorMessage = $error->getMessage();
+        }
 
-        // On fabrique la reponse
-        $response->setStatusCode(Response::HTTP_OK, "Content updated");
-
-
-        return $response;
+        return $this->json($errorMessage, Response::HTTP_BAD_REQUEST);
 
     }
 
@@ -327,15 +302,47 @@ class BookmarkController extends AbstractController
 
         return $response;
     }
-    private function create_form()
+    private function create_form(Bookmark $bookmark)
     {
 
-        $form = $this->createFormBuilder(Bookmark::class)
+        $form = $this->createFormBuilder($bookmark, ['csrf_protection' => false])
             ->add('name')
             ->add('description')
             ->add('url')
             ->getForm();
 
         return $form;
+    }
+
+    /**
+     * @Route("/api/bookmarks/latest/metadata", name="read_last_bookmark_metadata", methods={"GET"})
+     * @Route("api/bookmarks/{id}/metadata", name="read_bookmark_metadata", methods={"GET"})
+     */
+    public function metadata(
+        ManagerRegistry $doctrine,
+        $id = "",
+        Request $request,
+        #[Autowire(service: 'metadataCurl')] MetadataCrawlerInterface $metadataCrawler,
+        MetadataParserInterface $metadataParser,
+        CacheInterface $cache,
+        LoggerInterface $loggerInterface
+    ): JsonResponse {
+
+        /** @var Bookmark $bookmark */
+        $bookmark = ($request->attributes->get('_route') == "read_last_bookmark") ? $doctrine->getRepository(Bookmark::class)->findLastEntry() : $doctrine->getRepository(Bookmark::class)->find($id);
+
+        if (!$bookmark) {
+            throw $this->createNotFoundException('No bookmark found for ' . $id);
+        }
+
+        $url = $bookmark->getUrl();
+        $metadata = $cache->get("bookmark_" . $id, function (ItemInterface $item) use ($metadataParser, $url, $metadataCrawler, $loggerInterface): array {
+            $item->expiresAfter(3600);
+            $content = $metadataCrawler->getContent($url);
+            $loggerInterface->debug("Metadata with" . $item->getKey() . "URL : " . $url);
+            return $metadataParser->getMetadata($url, $content["content"]);
+        });
+        return new JsonResponse($metadata);
+
     }
 }
